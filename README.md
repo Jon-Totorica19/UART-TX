@@ -30,12 +30,10 @@ add wave -r *
 run -all
 ```
 
-## Testbench Coverage
-- Reset to IDLE
-- One-cycle pulse in IDLE
-- Transmit an example byte (0xB7)
-- Wait for busy to go from high --> low
-- Verify waveform shows correct start/data/stop timing
+## Testbench (Self Checking) Coverage
+- Drives a one-cycle start pulse and loads data_in
+- Monitors tx and samples at the midpoint of each UART bit period (start, 8 data bits LSB-first, stop)
+- Automatically fails with $fatal on any mismatch; prints PASS and ends simulation on success
 
 ## Result Waveform
 <img width="1025" height="329" alt="image" src="https://github.com/user-attachments/assets/91abb55e-5d30-4f00-8fdd-11331619f95b" />
