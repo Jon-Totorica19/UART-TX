@@ -2,13 +2,15 @@
 
 module UART_TX_tb;
 
+	localparam int CLKS_PER_BIT = 8;
+
 	// Declare tb signals
 	logic clk, reset, start;
 	logic [7:0] data_in;
 	logic tx, busy;
 
 	// Instantiate UUT
-	UART_TX UUT ( // to override parameter, such as 16 clks per bit: UART_TX #(.CLKS_PER_BIT(16)) UUT (...)
+	UART_TX #(.CLKS_PER_BIT(CLKS_PER_BIT)) UUT ( // to override parameter, such as 16 clks per bit: UART_TX #(.CLKS_PER_BIT(16)) UUT (...)
 		.clk(clk),
 		.reset(reset),
 		.start(start),
@@ -23,60 +25,72 @@ module UART_TX_tb;
 	forever #5 clk = ~clk;
 	end
 
+	// Task: Drive a 1-cycle start pulse and load data
+	task automatic pulse_start(input logic [7:0] b);
+		@(negedge clk);
+		data_in = b;
+		start = 1'b1;
+		
+		@(negedge clk);
+		start = 1'b0;
+	endtask
+
+	// Task: Self check one UART frame on tx
+	task automatic check_byte(input logic [7:0] exp);
+		int i;
+
+		// Wait for start bit to begin (tx deasserted)
+		@(negedge tx);
+		
+		// Move to middle of start bit, then sample
+		repeat (CLKS_PER_BIT/2) @(posedge clk);
+		#1;
+		if (tx !== 1'b0) $fatal(1, "Start bit wrong. Expected 0, got %0b at t=%0t", tx, $time);
+
+		// Check busy state
+		if (busy !== 1'b1) $fatal(1, "busy not high during transmit at t=%0t", $time);
+
+		// Sample each data bit in the middle of its period
+		for (i=0; i < 8; i++) begin
+			repeat(CLKS_PER_BIT) @(posedge clk);
+			#1;
+			if (tx !== exp[i])
+				$fatal(1, "Data bit %0d wrong. Expected %0b, got %0b at t=%0t", i, exp[i], tx, $time);
+		end
+
+		// Sample stop bit
+		repeat (CLKS_PER_BIT) @(posedge clk);
+		#1;
+		if (tx !== 1'b1) $fatal(1, "Stop bit wrong. Expected 1, got %0b at t=%0t", tx, $time);
+	endtask
+
 	// Stimulus 
 	initial begin
 
 	// Initialize signals
 	reset = 1'b1;
-	start = '0;
-	data_in = 8'b10110111;
+	start = 1'b0;
+	data_in = '0;
 
-	// Stay in IDLE state
-	#20;
+	// Hold reset, stay in IDLE for a couple cylces
+	repeat (2) @(negedge clk);
+	reset = 1'b0;
+	
+	// Start checker before pulse start, run the to in parallel
+	fork begin
+		check_byte(8'hB7);
+	end
+	begin
+		pulse_start(8'hB7);
+		$display("Sending byte = 0x%0h at t=%0t", 8'hB7, $time);
+	end
+	join
 
-	// Release reset
-	@ (negedge clk)
-	reset = 0;
-
-	// Pulse start for one clock cycle
-	// Will go to START state
-	@ (negedge clk)
-	start = 1;
-
-	@ (negedge clk)
-	start = 0;
+	// Wait until transmitter is back to IDLE
+	wait (busy == 1'b0);
 		
-	/*
-	start bit: 0 will be output to tx for CLKS_PER_BIT cycles (8)
-	8 clock cycles = 80 time units
-	bit-tick will be asserted and will move to DATA state
-	*/
-	// #80;
-
-	/*
-	Leave in DATA state until all 8 bits are sent -> bit_idx == 7
-	occures after 8 bits x 8 clock cylces = 64 cycles = 640 time units
-	Will then move to STOP state
-	*/
-	// #640;
-
-	/*
-	stop bit: 1 will be output to tx for one CLK_PER_BIT cycle
-	then will be sent back to IDLE state
-	*/
-	// #80;
-
-	// Wait for transmitter to run through all bits
-	$display("after start pulse t=%0t", $time);
-
-	$display("waiting busy rise t=%0t", $time);
-	wait (busy == 1'b1);
-	$display("busy rose t=%0t", $time);
-
-	wait (busy == 1'b0); 
-	$display("busy fell t=%0t", $time);
-
-	# 20 $display("DONE t=%0t", $time);
+	$display("Pass: UART_TX transmitted correctly. t=%0t", $time);
 	$finish;
 	end
+
 endmodule
